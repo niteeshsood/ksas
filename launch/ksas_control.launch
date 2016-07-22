@@ -1,0 +1,12 @@
+<launch>
+  <include file="$(find ksas)/launch/ksas_stereo.launch"/>
+  <include file="$(find sptam)/launch/lau.launch"/>
+  <group ns="ksas">
+    <node pkg="ksas" type="quat_to_euler.py" name="ksas_quat_to_euler">
+      <remap from="/ksas/sptam/robot/pose" to="/sptam/robot/pose"/>
+    </node>
+
+    <node pkg="ksas" type="controller.py" name="ksas_controller"></node>
+
+  </group>
+</launch>

@@ -1,0 +1,22 @@
+<launch>
+  <include file="$(find ksas)/launch/ksas_stereo.launch"/>
+  <include file="$(find sptam)/launch/lau.launch"/>
+
+  <group ns="kalman">
+    <node pkg="ksas" type="kalman_quat.py" name="ksas_kalman_quat">
+      <remap from="/kalman/sptam/robot/pose" to="/sptam/robot/pose"/>  
+    </node>
+  </group>
+
+  <group ns="ksas">
+
+    <node pkg="ksas" type="quat_to_euler.py" name="ksas_quat_to_euler">
+      <remap from="/ksas/sptam/robot/pose" to="/sptam/robot/pose"/>
+    </node>
+
+    <node pkg="ksas" type="sood_error_gen.py" name="ksas_error_gen"></node>
+
+    <node pkg="ksas" type="error_debugger.py" name="ksas_debug"></node>
+
+  </group>
+</launch>

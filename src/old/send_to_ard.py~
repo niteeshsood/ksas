@@ -1,0 +1,85 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# Start up ROS pieces.
+PKG = 'ksas'
+import roslib; roslib.load_manifest(PKG)
+import rospy
+import tf
+import csv
+import os
+# Processing libraries
+from math import tan, sqrt, fabs, hypot, pi
+
+# ROS messages.
+from geometry_msgs.msg import PoseStamped, Pose, Quaternion, Point
+from ksas.msg import Eulers, TotalPose
+from std_msgs.msg import Float32, Int32, String
+
+path_list = list()
+
+class Arduino():
+
+    global path_list
+
+
+    def __init__(self):
+        self.got_new_msg = False
+        #Messages
+        self.prperr_msg = Float32()
+        self.laterr_msg = Float32()
+        self.dir_msg = Int32()
+        self.ard_msg = String()
+        #For the signed k and d values
+        self.signedk = 0.0
+        self.signedd = 0.0
+        self.dir = 1 #Default is no turn
+        #
+        self.got_pperr_ = False
+        self.got_lterr_ = False
+        self.got_dir_ = False
+
+        # Create subscribers and publishers.
+
+        sub_pperr = rospy.Subscriber('perpendicular/error', Float32, self.pp_callback)
+
+        sub_lterr = rospy.Subscriber('lateral/error', Float32, self.lt_callback)
+        sub_dir = rospy.Publisher('direction', Int32, queue_size=10)
+
+        pub_ard = rospy.Publisher('subsc_actuator', String, queue_size=10)
+        # Main while loop.
+        while not rospy.is_shutdown():
+            # Publish if all data is ready
+            if self.got_pperr_ and self.got_lterr_ and self.got_dir_:
+                pub_ard.publish(self.ard_msg)
+                
+    def pp_callback(self, msg):
+        if self.got_lterr_ or self.got_dir_:
+            self.ard_msg = String()
+        else:
+            a = str(msg.data)
+            self.ard_msg = a[a.find('.'):a.find('.')+4]
+            self.got_pperr_ = True
+             
+    def lt_callback(self, msg):
+        if self.got_pperr_ and not self.got_dir:
+            a = str(msg.data)
+            self.ard_msg+= '|'+a[a.find('.'):a.find('.')+4] 
+            self.got_lterr_ = True
+
+    def dir_callback(self,msg):
+        if self.got_pperr_ and self.got_lterr:
+            a = str(msg.data)
+            self.ard_msg+='|'+a
+            self.got_dir_ = True
+           
+
+        
+# Main function.    
+if __name__ == '__main__':
+    # Initialize the node and name it.
+    rospy.init_node('ksas_arduino', anonymous=True)
+    # Go to class functions that do all the heavy lifting. Do error checking.
+    try:
+        ard = Arduino()
+    except rospy.ROSInterruptException: pass

@@ -1,0 +1,83 @@
+<launch>
+ <!-- static_transform_publisher                                                x y z yaw pitch roll frame_id child_frame_id period_in_ms -->
+  <node pkg="tf" type="static_transform_publisher" name="camera_broadcaster" args="0 0 0 0 0 0 base_link camera_1 100"/>
+  <!-- Set use_sim_time true for datasets-->
+  <!--param name="use_sim_time" value="true"/-->
+<node pkg="ros_utils" type="pose_to_path" name="sptam_path">
+    <remap from="pose" to="sptam/robot/pose" />
+    <remap from="path" to="sptam/robot/path" />
+  </node>
+  <!-- Publish static transform between robot origin and left camera origin-->
+
+
+<group ns="stereo">
+
+    <!-- Call stereo_image_proc to undistort and rectify images -->
+    <node pkg="stereo_image_proc" type="stereo_image_proc" name="stereo_image_proc"/>
+
+  </group>
+<!-- Crop left image 
+  <node pkg="nodelet" type="nodelet"
+        args="standalone image_proc/crop_decimate"
+        name="left_decimator">
+    <param name="x_offset" type="int" value="52" />
+    <param name="y_offset" type="int" value="51" />
+    <param name="width" type="int" value="1177" />
+    <param name="height" type="int" value="860" />
+-->
+    <!-- remap input topics 
+    <remap from="camera/image_raw" to="/stereo/left/image_rect_color"/>
+    <remap from="camera/image_info" to="/stereo/left/camera_info"/>
+-->
+    <!-- remap output topics 
+    <remap from="camera_out/image_raw" to="/stereo/left_crop/image_rect_color"/>
+    <remap from="camera_out/image_info" to="/stereo/left_crop/camera_info"/>
+  </node>
+-->
+  <!-- Crop right image 
+  <node pkg="nodelet" type="nodelet"
+        args="standalone image_proc/crop_decimate"
+        name="right_decimator">
+    <param name="x_offset" type="int" value="52" />
+    <param name="y_offset" type="int" value="51" />
+    <param name="width" type="int" value="1177" />
+    <param name="height" type="int" value="860" />
+-->
+    <!-- remap input topics 
+    <remap from="camera/image_raw" to="/stereo/right/image_rect_color"/>
+    <remap from="camera/image_info" to="/stereo/right/camera_info"/>
+-->
+    <!-- remap output topics 
+    <remap from="camera_out/image_raw" to="/stereo/right_crop/image_rect_color"/>
+    <remap from="camera_out/image_info" to="/stereo/right_crop/camera_info"/>
+  </node>
+
+-->
+ 
+
+
+  <!-- Use motion model as odometry -->
+
+  <node pkg="sptam" type="motion_model_node" name="motion_model" output="screen" >
+    <rosparam command="delete"/>
+  </node>
+
+
+
+
+  <!-- Release -->
+  <node pkg="sptam" type="sptam_node" name="sptam" output="screen" >
+
+    <!-- Read S-PTAM parameters file -->
+    <rosparam command="load" file="$(find sptam)/configurationFiles/My.yaml" />
+   
+    <param name="approximate_sync" value="true" />
+    <param name="use_odometry" value="false"/>
+    <param name="odom_frame" value="/odom_combined"/>
+    <param name="camera_frame" value="camera_1"/>  <!-- set left camera frame -->
+    <!-- Remap Odometry message -->
+    <remap from="/robot/pose"  to="/odom"/>
+
+  </node>
+
+</launch>

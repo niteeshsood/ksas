@@ -1,0 +1,313 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# Start up ROS pieces.
+PKG = 'ksas'
+import roslib; roslib.load_manifest(PKG)
+import rospy
+import tf
+import csv
+import os
+# Processing libraries
+from math import tan, sqrt, fabs, hypot
+from pykalman import KalmanFilter
+
+
+# ROS messages.
+from geometry_msgs.msg import PoseStamped, Pose, Quaternion, Point
+from ksas.msg import Eulers, TotalPose
+from std_msgs.msg import Float32
+
+path_list = list()
+
+class ErrorGenerator():
+
+    global path_list
+    
+    def __init__(self):
+        self.got_new_msg = False
+        self.tpose_msg = TotalPose()
+        self.error_msg = Float32()
+        self.path_file = '/home/niteesh/paths/path1.csv'
+        self.ideltapos = 0.05
+        self.ideltaqua = 0.05
+        self.ideltarpy = 0.05
+        self.adeltapos = 0.05
+        self.adeltaqua = 0.05
+        self.adeltarpy = 0.05
+        self.pt = Point()
+        self.send_des_ = False
+        self.send_error_ = False
+        self.iposx = 0.0
+        self.iposy = 0.0
+        self.iposz = 0.0
+        self.iquax = 0.0
+        self.iquay = 0.0
+        self.iquaz = 0.0
+        self.iquaw = 0.0
+        self.iroll = 0.0
+        self.ipitc = 0.0
+        self.iyaw = 0.0
+        #self.start_time = rospy.get_rostime()
+        self.got_history = False
+        self.window_size = 10
+        self.history = list()
+        self.current_tpose = TotalPose()
+        #rospy.loginfo('You are here')
+        with open(self.path_file, 'rb') as fr:
+            reader = csv.reader(fr, delimiter=',')
+            for row in reader:
+                path_list.append(row)
+            rospy.loginfo('Path is ready')
+
+        # Create subscribers and publishers.
+        sub_euler  = rospy.Subscriber('totalpose', TotalPose, self.tpose_callback)
+
+        pub_error = rospy.Publisher('error', Float32, queue_size=10)
+        pub_des = rospy.Publisher('des', Point, queue_size=10)
+        # Main while loop.
+        while not rospy.is_shutdown():
+            # Publish new data if we got a new message.
+            
+
+
+            if self.send_error_ and self.send_des_:
+                pub_error.publish(self.error_msg)
+                pub_des.publish(self.pt)
+                self.send_error_ = False
+                self.send_des_ = False
+
+    def find_error(self, xc, zc, thetac):
+        #rospy.loginfo('In find error')
+        global path_list
+        xds = path_list[0]
+        zds = path_list[1]
+        kmin = 1000.0  #Arbitrarily high value
+
+        for i in xrange(len(xds)):
+            #rospy.loginfo('Current i is ' + str(i))
+
+            a = 1
+            b = tan(thetac)
+            c = -xc - zc*tan(thetac)
+            
+            k = fabs(a*float(xds[i]) + b*float(zds[i]) + c ) / hypot(a,b)
+            #rospy.loginfo(str(z_d) + ' is desired z')
+            if kmin > k:
+                kmin = k
+                x_d = float(xds[i])
+                z_d = float(zds[i])
+                #dmin = sqrt( (float(xds[i]) -xc)**2 + (z_d - zc)**2 )
+                #rospy.loginfo( str(zds[i]) + ' is z value to go to')
+                #rospy.loginfo( str(xds[i]) + ' is x value to go to')
+                #rospy.loginfo( str(zc) + ' is zc')
+                #rospy.loginfo( str(xc) + ' is xc')
+
+           # rospy.loginfo( str(dmin) + ' is d minimum')
+
+            dmin = sqrt( (xc - x_d)**2 + (zc - z_d)**2)
+            self.pt.x = x_d
+            self.pt.z = z_d
+            self.pt.y = 0.0
+
+        return dmin
+
+      
+    # Odometry callback function.
+    def tpose_callback(self, msg):
+        self.roll = msg.euler.roll
+        self.pitch = msg.euler.pitch
+        self.yaw = msg.euler.yaw
+
+
+        thetac = msg.euler.pitch
+        zc = msg.pose.position.z
+        xc = msg.pose.position.x
+
+        #if not got_history:
+        #self.current_tpose = msg
+        self.history.append(msg)#Add the new total pose msg
+
+	#If the window is full
+        if len(self.history) == self.window_size + 1:
+            vals  = self.a_filter()
+            xc = float(vals[0]); zc = float(vals[1]); thetac = float(vals[2])
+
+	#If the window is not full yet
+        if len(self.history) < self.window_size:
+	#rospy.loginfo("Window is at " + str(10-len(self.history))    
+            self.i_filter()
+            xc = float(self.history[-1].pose.position.x)
+            zc = float(self.history[-1].pose.position.z)
+            thetac = float(self.history[-1].euler.pitch)
+		
+        err = self.find_error(xc, zc, thetac)
+	self.gen_err_msg(err)
+	self.gen_des_msg()
+	
+
+	     
+    def a_filter(self):
+		
+	tposx = 0.0; tposy = 0.0; tposz = 0.0; tquax = 0.0; tquay = 0.0; tquaz = 0.0; tquaw = 0.0; troll = 0.0; tpitc = 0.0; tyaw = 0.0;
+		
+	#Average the values over the window
+	for i in xrange(self.window_size):
+	    cposx = self.history[i].pose.position.x; tposx += cposx
+	    cposy = self.history[i].pose.position.y; tposy += cposy
+	    cposz = self.history[i].pose.position.z; tposz += cposz
+
+	    cquax = self.history[i].pose.orientation.x; tquax += cquax
+	    cquay = self.history[i].pose.orientation.y; tquay += cquay
+	    cquaz = self.history[i].pose.orientation.z; tquaz += cquaz
+	    cquaw = self.history[i].pose.orientation.w; tquax += cquaw
+
+	    croll = self.history[i].euler.roll; troll += croll
+	    cpitc = self.history[i].euler.pitch; tpitc += cpitc
+	    cyaw  = self.history[i].euler.yaw; tyaw += cyaw
+
+	posxavg = tposx/self.window_size
+	posyavg = tposy/self.window_size
+	poszavg = tposz/self.window_size
+		
+	quaxavg = tquax/self.window_size
+	quayavg = tquay/self.window_size
+	quazavg = tquaz/self.window_size
+	quawavg = tquaw/self.window_size
+
+	rollavg = troll/self.window_size
+	pitcavg = tpitc/self.window_size
+	yawavg  = tyaw /self.window_size
+
+        #New value should vary about the average only
+        nposx = self.history[-1].pose.position.x
+        nposy = self.history[-1].pose.position.y
+        nposz = self.history[-1].pose.position.z
+
+        nquax = self.history[-1].pose.orientation.x
+        nquay = self.history[-1].pose.orientation.y
+        nquaz = self.history[-1].pose.orientation.z
+        nquaw = self.history[-1].pose.orientation.w
+
+        nroll = self.history[-1].euler.roll
+        npitc = self.history[-1].euler.pitch
+        nyaw  = self.history[-1].euler.yaw
+
+	#if not good enough, just pop it and return the last 
+
+        #First check the positions
+        if nposx > tposx + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nposy > tposy + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nposz > tposz + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+
+        #Now check the quaternion
+        if nquax > tquax + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nquay > tquay + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nquaz > tquaz + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nquaw > tquaw + self.adeltapos:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nroll > troll + self.adeltarpy:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if npitc > tpitc + self.adeltarpy:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+
+        if nyaw > tyaw + self.adeltarpy:  
+            self.history.pop()
+            return [str(self.history[-1].pose.position.x), str(self.history[-1].pose.position.z), str(self.history[-1].euler.yaw)]
+        
+    #Initial filtering until window size is complete.
+    
+    def i_filter(self):
+        for i in xrange(-1,-2,-1): #quick hack to have i = -1
+            #because I didn't want to reformat all the code
+            
+            cposx = self.history[i].pose.position.x; 
+            if cposx > self.iposx + self.ideltapos:
+                cposx = self.iposx 
+            self.iposx = cposx
+
+
+            cposy = self.history[i].pose.position.y
+            if cposy > self.iposy + self.ideltapos:
+                cposy = self.iposy 
+            self.iposy = cposy
+
+            cposz = self.history[i].pose.position.z
+            if cposz > self.iposz + self.ideltapos:
+                cposz = self.iposz 
+            self.iposz = cposz
+
+            cquax = self.history[i].pose.orientation.x
+            if cquax > self.iquax + self.ideltapos:
+                cquax = self.iquax 
+            self.iquax = cquax
+              
+            cquay = self.history[i].pose.orientation.y
+            if cquay > self.iquay + self.ideltapos:
+                cquay = self.iquay 
+            self.iquay = cquay
+
+            cquaz = self.history[i].pose.orientation.z
+            if cquaz > self.iquaz + self.ideltapos:
+                cposx = self.iquaz 
+            self.iposx = cquaz
+
+            cquaw = self.history[i].pose.orientation.w
+            if cquaw > self.iquaw + self.ideltapos:
+                cquaw = self.iquaw 
+            self.iquaw = cquaw
+
+            croll = self.history[i].euler.roll
+            if croll > self.iroll + self.ideltarpy:
+                croll = self.iroll 
+            self.iroll = croll
+
+            cpitc = self.history[i].euler.pitch
+            if cpitc > self.ipitc + self.ideltarpy:
+                cpitc = self.ipitc 
+            self.ipitc = cpitc
+
+            cyaw  = self.history[i].euler.yaw
+            if cyaw > self.iyaw + self.ideltarpy:
+                cyaw = self.iyaw 
+            self.iyaw = cyaw
+             
+    def gen_des_msg(self):
+        self.send_des_ = True
+        
+    # Fill in Euler angle message.
+    def gen_err_msg(self, error):
+        self.send_error_ = True
+        self.error_msg = float(error)
+        
+# Main function.    
+if __name__ == '__main__':
+    # Initialize the node and name it.
+    rospy.init_node('ksas_error', anonymous=True)
+    # Go to class functions that do all the heavy lifting. Do error checking.
+    try:
+        errorer = ErrorGenerator()
+    except rospy.ROSInterruptException: pass
